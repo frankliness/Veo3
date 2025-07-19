@@ -1,0 +1,36 @@
+# 核心依赖
+google-genai>=1.26.0
+google-cloud-storage>=2.0.0
+google-cloud-aiplatform>=1.56.0
+
+# Airflow相关依赖
+apache-airflow>=2.9.2
+psycopg2-binary>=2.9.0
+apache-airflow-providers-google>=10.0.0
+
+# 工具依赖
+python-dotenv>=1.0
+tqdm>=4.66
+rich>=13.7
+
+# 图像处理
+Pillow>=10.0.0
+
+# 异步处理
+aiohttp>=3.9
+nest-asyncio>=1.5
+asyncio-throttle>=1.0.0
+
+# 日志和监控
+tenacity>=8.2.3
+
+# 数据处理
+pandas>=2.0.0
+numpy>=1.24.0
+
+# 网络请求
+requests>=2.31.0
+urllib3>=2.0.0
+
+# 加密相关（用于Airflow Fernet密钥）
+cryptography>=41.0.0 
