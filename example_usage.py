@@ -11,8 +11,8 @@ from pathlib import Path
 # 添加src目录到路径
 sys.path.insert(0, 'src')
 
-from job_manager import JobManager
-from downloader import file_downloader
+from src.job_manager import JobManager
+from src.downloader import file_downloader
 
 def demo_workflow():
     """演示完整的异步工作流"""
@@ -116,7 +116,7 @@ def demo_workflow():
     high_priority_tasks = [t for t in high_priority_tasks if t['priority'] >= 1]
     
     print(f"  高优先级任务 (≥1): {len(high_priority_tasks)} 个")
-    
+        
     # 按文件类型过滤
     image_tasks = job_manager.get_pending_downloads(limit=10, file_type='image')
     video_tasks = job_manager.get_pending_downloads(limit=10, file_type='video')

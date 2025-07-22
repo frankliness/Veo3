@@ -16,8 +16,8 @@ import logging
 # 添加src目录到Python路径
 sys.path.insert(0, '/opt/airflow/src')
 
-from job_manager import JobManager
-from downloader import file_downloader
+from src.downloader import file_downloader
+from src.job_manager import JobManager
 
 # 设置日志
 logging.basicConfig(level=logging.INFO)

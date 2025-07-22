@@ -9,7 +9,6 @@ import sys
 import argparse
 import logging
 from typing import List, Optional, Dict
-import sqlite3
 
 # 设置日志
 logging.basicConfig(
@@ -21,74 +20,21 @@ logger = logging.getLogger(__name__)
 # 添加当前目录到Python路径
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+from database import db_manager
+
 class JobManager:
     """作业管理器"""
     
-    def __init__(self, db_path: str = "./job_queue.db"):
+    def __init__(self):
         """初始化作业管理器"""
-        self.db_path = db_path
-        self.init_database()
+        # 移除自动初始化，改为按需初始化
+        pass
     
     def init_database(self):
         """初始化数据库表"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                
-                # 创建作业表（现有）
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS jobs (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        prompt_text TEXT NOT NULL,
-                        job_type TEXT NOT NULL,
-                        status TEXT DEFAULT 'pending',
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        generation_status TEXT DEFAULT 'pending',
-                        generation_task_id TEXT,
-                        generation_result_url TEXT,
-                        generation_completed_at TIMESTAMP,
-                        download_status TEXT DEFAULT 'pending',
-                        download_attempts INTEGER DEFAULT 0,
-                        local_file_path TEXT,
-                        download_completed_at TIMESTAMP,
-                        file_size INTEGER,
-                        error_message TEXT
-                    )
-                ''')
-                
-                # 创建下载队列表
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS download_queue (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        job_id INTEGER,
-                        remote_url TEXT NOT NULL,
-                        local_path TEXT NOT NULL,
-                        file_type TEXT NOT NULL,
-                        priority INTEGER DEFAULT 0,
-                        status TEXT DEFAULT 'pending',
-                        attempts INTEGER DEFAULT 0,
-                        max_attempts INTEGER DEFAULT 3,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        started_at TIMESTAMP,
-                        completed_at TIMESTAMP,
-                        file_size INTEGER,
-                        error_message TEXT,
-                        FOREIGN KEY (job_id) REFERENCES jobs (id)
-                    )
-                ''')
-                
-                # 创建索引
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs (status)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_jobs_generation_status ON jobs (generation_status)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_jobs_download_status ON jobs (download_status)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_download_queue_status ON download_queue (status)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_download_queue_priority ON download_queue (priority DESC)')
-                
-                conn.commit()
-                logger.info("数据库初始化完成")
-                
+            db_manager.init_database()
+            logger.info("数据库初始化完成")
         except Exception as e:
             logger.error(f"数据库初始化失败: {e}")
             raise
@@ -109,13 +55,13 @@ class JobManager:
             下载任务ID
         """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with db_manager.get_connection() as conn:
                 cursor = conn.cursor()
                 
                 cursor.execute('''
                     INSERT INTO download_queue 
                     (job_id, remote_url, local_path, file_type, priority) 
-                    VALUES (?, ?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s, %s)
                 ''', (job_id, remote_url, local_path, file_type, priority))
                 
                 download_id = cursor.lastrowid
@@ -140,7 +86,7 @@ class JobManager:
             待下载任务列表
         """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with db_manager.get_connection() as conn:
                 cursor = conn.cursor()
                 
                 base_query = '''
@@ -154,10 +100,10 @@ class JobManager:
                 params = []
                 
                 if file_type:
-                    base_query += ' AND d.file_type = ?'
+                    base_query += ' AND d.file_type = %s'
                     params.append(file_type)
                 
-                base_query += ' ORDER BY d.priority DESC, d.created_at ASC LIMIT ?'
+                base_query += ' ORDER BY d.priority DESC, d.created_at ASC LIMIT %s'
                 params.append(limit)
                 
                 cursor.execute(base_query, params)
@@ -184,47 +130,46 @@ class JobManager:
             file_size: 文件大小
         """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with db_manager.get_connection() as conn:
                 cursor = conn.cursor()
                 
                 # 更新下载队列状态
                 if status == 'downloading':
                     cursor.execute('''
                         UPDATE download_queue 
-                        SET status = ?, started_at = CURRENT_TIMESTAMP, 
+                        SET status = %s, started_at = CURRENT_TIMESTAMP, 
                             attempts = attempts + 1, updated_at = CURRENT_TIMESTAMP
-                        WHERE id = ?
+                        WHERE id = %s
                     ''', (status, download_id))
                     
                 elif status == 'completed':
                     cursor.execute('''
                         UPDATE download_queue 
-                        SET status = ?, completed_at = CURRENT_TIMESTAMP, 
-                            file_size = ?, updated_at = CURRENT_TIMESTAMP
-                        WHERE id = ?
+                        SET status = %s, completed_at = CURRENT_TIMESTAMP, 
+                            file_size = %s, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = %s
                     ''', (status, file_size, download_id))
                     
-                    # 同时更新关联作业的下载状态
+                    # 同时更新关联作业的状态为completed（如果存在local_path字段）
                     cursor.execute('''
                         UPDATE jobs 
-                        SET download_status = 'completed', 
-                            download_completed_at = CURRENT_TIMESTAMP,
-                            file_size = ?,
+                        SET status = 'completed', 
+                            local_path = (SELECT local_path FROM download_queue WHERE id = %s),
                             updated_at = CURRENT_TIMESTAMP
-                        WHERE id = (SELECT job_id FROM download_queue WHERE id = ?)
-                    ''', (file_size, download_id))
+                        WHERE id = (SELECT job_id FROM download_queue WHERE id = %s)
+                    ''', (download_id, download_id))
                     
                 elif status == 'failed':
                     cursor.execute('''
                         UPDATE download_queue 
-                        SET status = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP
-                        WHERE id = ?
+                        SET status = %s, error_message = %s, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = %s
                     ''', (status, error_message, download_id))
                 else:
                     cursor.execute('''
                         UPDATE download_queue 
-                        SET status = ?, updated_at = CURRENT_TIMESTAMP
-                        WHERE id = ?
+                        SET status = %s, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = %s
                     ''', (status, download_id))
                 
                 conn.commit()
@@ -237,7 +182,7 @@ class JobManager:
     def get_download_stats(self) -> Dict:
         """获取下载统计信息"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with db_manager.get_connection() as conn:
                 cursor = conn.cursor()
                 
                 # 总体统计
@@ -303,13 +248,13 @@ class JobManager:
             清理的记录数
         """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with db_manager.get_connection() as conn:
                 cursor = conn.cursor()
                 
                 cursor.execute('''
                     DELETE FROM download_queue 
                     WHERE status = 'completed' 
-                    AND completed_at < datetime('now', '-{} days')
+                    AND completed_at < CURRENT_TIMESTAMP - INTERVAL '{} days'
                 '''.format(days))
                 
                 cleaned_count = cursor.rowcount
@@ -325,13 +270,13 @@ class JobManager:
     def add_job(self, prompt_text: str, job_type: str) -> int:
         """添加新作业"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with db_manager.get_connection() as conn:
                 cursor = conn.cursor()
                 
                 # 检查是否已存在相同提示词的作业
                 cursor.execute('''
                     SELECT id FROM jobs 
-                    WHERE prompt_text = ? AND job_type = ?
+                    WHERE prompt_text = %s AND job_type = %s
                 ''', (prompt_text, job_type))
                 
                 existing = cursor.fetchone()
@@ -342,10 +287,11 @@ class JobManager:
                 # 添加新作业
                 cursor.execute('''
                     INSERT INTO jobs (prompt_text, job_type) 
-                    VALUES (?, ?)
+                    VALUES (%s, %s)
+                    RETURNING id
                 ''', (prompt_text, job_type))
                 
-                job_id = cursor.lastrowid
+                job_id = cursor.fetchone()[0]
                 conn.commit()
                 
                 logger.info(f"成功添加作业，ID: {job_id}, 类型: {job_type}")
@@ -369,7 +315,7 @@ class JobManager:
     def show_stats(self):
         """显示作业统计信息"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with db_manager.get_connection() as conn:
                 cursor = conn.cursor()
                 
                 # 获取作业统计
@@ -404,24 +350,24 @@ class JobManager:
     def reset_stuck_jobs(self, job_type: Optional[str] = None) -> int:
         """重置卡住的作业"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with db_manager.get_connection() as conn:
                 cursor = conn.cursor()
                 
                 # 重置长时间处于processing状态的作业
                 if job_type:
                     cursor.execute('''
                         UPDATE jobs 
-                        SET status = 'pending', generation_status = 'pending'
+                        SET status = 'pending'
                         WHERE status = 'processing' 
-                        AND job_type = ?
-                        AND updated_at < datetime('now', '-1 hour')
+                        AND job_type = %s
+                        AND updated_at < CURRENT_TIMESTAMP - INTERVAL '1 hour'
                     ''', (job_type,))
                 else:
                     cursor.execute('''
                         UPDATE jobs 
-                        SET status = 'pending', generation_status = 'pending'
+                        SET status = 'pending'
                         WHERE status = 'processing'
-                        AND updated_at < datetime('now', '-1 hour')
+                        AND updated_at < CURRENT_TIMESTAMP - INTERVAL '1 hour'
                     ''')
                 
                 count = cursor.rowcount

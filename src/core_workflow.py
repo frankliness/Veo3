@@ -60,35 +60,51 @@ def get_and_lock_job(job_type: str) -> Optional[Dict[str, Any]]:
         logger.error(f"获取并锁定作业失败: {e}")
         raise
 
-def mark_job_as_completed(job_id: int, local_path: str, gcs_uri: Optional[str] = None) -> bool:
+def mark_job_as_completed(job_id: int, local_path: str = None, gcs_uri: Optional[str] = None) -> bool:
     """
     将作业标记为已完成
     
     Args:
         job_id: 作业ID
-        local_path: 生成文件的本地路径
-        gcs_uri: 可选的GCS URI
+        local_path: 生成文件的本地路径（可选）
+        gcs_uri: GCS URI（可选）
     
     Returns:
         操作是否成功
     """
-    update_sql = """
+    # 构建动态SQL，只更新提供的字段
+    update_fields = ["status = 'completed'"]
+    params = []
+    
+    if local_path is not None:
+        update_fields.append("local_path = %s")
+        params.append(local_path)
+    
+    if gcs_uri is not None:
+        update_fields.append("gcs_uri = %s")
+        params.append(gcs_uri)
+    
+    params.append(job_id)  # job_id总是最后一个参数
+    
+    update_sql = f"""
     UPDATE jobs 
-    SET status = 'completed', 
-        local_path = %s,
-        gcs_uri = %s
+    SET {', '.join(update_fields)}
     WHERE id = %s
     """
     
     try:
         with db_manager.get_connection() as conn:
             with conn.cursor() as cursor:
-                cursor.execute(update_sql, (local_path, gcs_uri, job_id))
+                cursor.execute(update_sql, params)
                 rows_affected = cursor.rowcount
                 conn.commit()
                 
                 if rows_affected > 0:
-                    logger.info(f"作业 {job_id} 已标记为完成，本地路径: {local_path}")
+                    logger.info(f"作业 {job_id} 已标记为完成")
+                    if local_path:
+                        logger.info(f"  本地路径: {local_path}")
+                    if gcs_uri:
+                        logger.info(f"  GCS URI: {gcs_uri}")
                     return True
                 else:
                     logger.warning(f"作业 {job_id} 不存在或无法更新")
@@ -186,7 +202,7 @@ def get_job_by_id(job_id: int) -> Optional[Dict[str, Any]]:
         作业详情字典，如果不存在则返回None
     """
     select_sql = """
-    SELECT id, prompt_text, status, job_type, local_path, gcs_uri, created_at, updated_at
+    SELECT id, prompt_text, status, job_type, local_path, gcs_uri, operation_id, created_at, updated_at
     FROM jobs 
     WHERE id = %s
     """
@@ -205,12 +221,183 @@ def get_job_by_id(job_id: int) -> Optional[Dict[str, Any]]:
                         'job_type': result[3],
                         'local_path': result[4],
                         'gcs_uri': result[5],
-                        'created_at': result[6],
-                        'updated_at': result[7]
+                        'operation_id': result[6],
+                        'created_at': result[7],
+                        'updated_at': result[8]
                     }
                 else:
                     return None
                     
     except Exception as e:
         logger.error(f"获取作业详情失败: {e}")
+        raise
+
+def update_job_operation_info(job_id: int, operation_id: str) -> bool:
+    """
+    更新作业的操作ID信息
+    
+    Args:
+        job_id: 作业ID
+        operation_id: 操作ID
+    
+    Returns:
+        操作是否成功
+    """
+    update_sql = """
+    UPDATE jobs 
+    SET operation_id = %s
+    WHERE id = %s
+    """
+    
+    try:
+        with db_manager.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(update_sql, (operation_id, job_id))
+                rows_affected = cursor.rowcount
+                conn.commit()
+                
+                if rows_affected > 0:
+                    logger.info(f"作业 {job_id} 的操作ID已更新: {operation_id}")
+                    return True
+                else:
+                    logger.warning(f"作业 {job_id} 不存在或无法更新操作ID")
+                    return False
+                    
+    except Exception as e:
+        logger.error(f"更新作业操作ID失败: {e}")
+        raise
+
+def mark_job_as_awaiting_retry(job_id: int) -> bool:
+    """
+    将作业标记为等待重试状态
+    
+    Args:
+        job_id: 作业ID
+    
+    Returns:
+        操作是否成功
+    """
+    update_sql = """
+    UPDATE jobs 
+    SET status = 'awaiting_retry'
+    WHERE id = %s
+    """
+    
+    try:
+        with db_manager.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(update_sql, (job_id,))
+                rows_affected = cursor.rowcount
+                conn.commit()
+                
+                if rows_affected > 0:
+                    logger.info(f"作业 {job_id} 已标记为等待重试")
+                    return True
+                else:
+                    logger.warning(f"作业 {job_id} 不存在或无法更新状态")
+                    return False
+                    
+    except Exception as e:
+        logger.error(f"标记作业为等待重试失败: {e}")
+        raise
+
+def update_job_gcs_uri(job_id: int, gcs_uri: str) -> bool:
+    """
+    更新作业的GCS URI
+    
+    Args:
+        job_id: 作业ID
+        gcs_uri: GCS URI
+    
+    Returns:
+        操作是否成功
+    """
+    update_sql = """
+    UPDATE jobs 
+    SET gcs_uri = %s
+    WHERE id = %s
+    """
+    
+    try:
+        with db_manager.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(update_sql, (gcs_uri, job_id))
+                rows_affected = cursor.rowcount
+                conn.commit()
+                
+                if rows_affected > 0:
+                    logger.info(f"作业 {job_id} 的GCS URI已更新: {gcs_uri}")
+                    return True
+                else:
+                    logger.warning(f"作业 {job_id} 不存在或无法更新GCS URI")
+                    return False
+                    
+    except Exception as e:
+        logger.error(f"更新作业GCS URI失败: {e}")
+        raise 
+
+def mark_job_as_generation_successful(job_id: int, gcs_uri: str) -> bool:
+    """
+    将作业标记为生成成功状态（视频已生成，等待下载）
+    
+    Args:
+        job_id: 作业ID
+        gcs_uri: 生成的视频GCS URI
+    
+    Returns:
+        操作是否成功
+    """
+    update_sql = """
+    UPDATE jobs 
+    SET status = 'generation_successful', gcs_uri = %s
+    WHERE id = %s
+    """
+    
+    try:
+        with db_manager.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(update_sql, (gcs_uri, job_id))
+                rows_affected = cursor.rowcount
+                conn.commit()
+                
+                if rows_affected > 0:
+                    logger.info(f"作业 {job_id} 已标记为生成成功，GCS URI: {gcs_uri}")
+                    return True
+                else:
+                    logger.warning(f"作业 {job_id} 不存在或无法更新")
+                    return False
+                    
+    except Exception as e:
+        logger.error(f"标记作业生成成功失败: {e}")
+        raise
+
+def get_job_operation_id(job_id: int) -> Optional[str]:
+    """
+    获取作业的operation_id
+    
+    Args:
+        job_id: 作业ID
+    
+    Returns:
+        operation_id字符串，如果不存在则返回None
+    """
+    select_sql = """
+    SELECT operation_id FROM jobs WHERE id = %s
+    """
+    
+    try:
+        with db_manager.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(select_sql, (job_id,))
+                result = cursor.fetchone()
+                
+                if result and result[0]:
+                    logger.info(f"作业 {job_id} 的operation_id: {result[0]}")
+                    return result[0]
+                else:
+                    logger.info(f"作业 {job_id} 没有operation_id")
+                    return None
+                    
+    except Exception as e:
+        logger.error(f"获取作业operation_id失败: {e}")
         raise 

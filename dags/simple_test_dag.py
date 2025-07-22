@@ -43,13 +43,13 @@ def simple_test_dag():
         """测试模块导入"""
         try:
             # 测试导入
-            from database import db_manager
-            logger.info("✅ 成功导入 database 模块")
-            
-            from core_workflow import get_and_lock_job
+            from src.core_workflow import get_and_lock_job
             logger.info("✅ 成功导入 core_workflow 模块")
             
-            from image_generator import image_generator
+            from src.database import db_manager
+            logger.info("✅ 成功导入 database 模块")
+            
+            from src.image_generator import ImageGenerator
             logger.info("✅ 成功导入 image_generator 模块")
             
             return "所有模块导入成功"
@@ -65,7 +65,7 @@ def simple_test_dag():
     def test_database():
         """测试数据库连接"""
         try:
-            from database import db_manager
+            from src.database import db_manager
             
             # 测试数据库连接
             with db_manager.get_connection() as conn:

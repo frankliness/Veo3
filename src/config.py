@@ -38,8 +38,8 @@ TIMEOUT_CONFIG = {
 # 视频生成配置
 VIDEO_CONFIG = {
     "aspect_ratio": "16:9",
-    "quality": "standard",  # 可选: standard, high
-    "duration": "short"     # 可选: short, medium, long
+    "quality": "standard",  # 标准质量
+    "duration": 8           # 8秒时长
 }
 
 # 日志配置

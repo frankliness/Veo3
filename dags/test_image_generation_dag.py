@@ -108,20 +108,24 @@ def test_image_generation_dag():
     
     # 在DAG函数内部导入模块
     try:
-        from core_workflow import get_and_lock_job, mark_job_as_completed, mark_job_as_failed
-        from image_generator import image_generator
-        from database import db_manager
+        from src.core_workflow import get_and_lock_job, mark_job_as_completed, mark_job_as_failed
+        from src.image_generator import ImageGenerator
+        from src.database import db_manager
     except ImportError as e:
         logger.error(f"导入模块失败: {e}")
         raise
     
     @task(task_id='initialize_database')
     def initialize_database():
-        """初始化数据库表结构"""
+        """初始化数据库连接"""
         try:
-            db_manager.init_database()
-            logger.info("数据库初始化完成")
-            return "数据库初始化成功"
+            # 只在表不存在时初始化
+            if not db_manager.check_table_exists('jobs'):
+                db_manager.init_database()
+                logger.info("数据库初始化完成")
+            else:
+                logger.info("数据库表已存在，跳过初始化")
+            return "database_ready"
         except Exception as e:
             logger.error(f"数据库初始化失败: {e}")
             raise
@@ -155,6 +159,9 @@ def test_image_generation_dag():
             # 从DAG参数获取dry_run设置
             dry_run_value = context['params'].get('dry_run', True)
             logger.info(f"开始生成图像，作业ID: {job_id}, Dry Run模式: {dry_run_value}")
+            
+            # 创建图像生成器实例
+            image_generator = ImageGenerator()
             
             # 生成图像（传递dry_run参数）
             local_path = image_generator.generate_test_image_and_save(
@@ -210,6 +217,7 @@ def test_image_generation_dag():
     def cleanup_test_files():
         """清理旧的测试文件"""
         try:
+            image_generator = ImageGenerator()
             cleaned_count = image_generator.cleanup_test_files(max_age_hours=24)
             logger.info(f"清理了 {cleaned_count} 个测试文件")
             return f"清理了 {cleaned_count} 个文件"
